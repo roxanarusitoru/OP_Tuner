@@ -394,7 +394,34 @@ CBRSolution = {
               'block_size' : [],
               'part_size' : []
               }
+CBRSystemCase = {
+                'case' : None,
+                'solution' : None,
+                'occurances' : None
+                }
 
+CBRSystem = {
+            'cases' : []
+            }
+
+# init CBR
+
+def CBRInit(trainingCases, results):
+  for index in range(0, trainingCases):
+    CBRSystemCase = {
+                    'case' : trainingCases[index],
+                    'solution' : results[index], 
+                    'occurances' : 1
+                    };
+    sysCase = retrieveSysCase(CBRSystemCase, CBRSystem);
+    if sysCase != None:
+      # we've seen it before -> increment occurances
+      sysCase['occurances'] = sysCase['occurances']+1;
+    else:
+      CBRSystem.append(CBRSystemCase);
+  return CBRSystem;   
+
+      
 
 # create vector of properties - the case
 
