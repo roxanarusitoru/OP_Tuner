@@ -374,8 +374,27 @@ for index in range(len(loops_in_order)-1):
                      }
       fusable_pairs.append(fusable_pair);
 
-print fusable_pairs;
+# print fusable_pairs;
+# print op_par_loops;
+
 # we now do parmeter analysis to see if we can/should really fuse them
+# let's leave this for the machine learning -> it is machine learning stuff
+
+# define CBR
+
+CBRCase = {
+          'arch' : Arch.ANY,
+          'fusable_pairs' : [],
+          'op_par_loops' : []     
+          }
+CBRSolution = {
+              'loops_to_fuse' : [],
+              'final_loops' : [],
+              'op_warpsize' : [],
+              'block_size' : [],
+              'part_size' : []
+              }
+
 
 # create vector of properties - the case
 
