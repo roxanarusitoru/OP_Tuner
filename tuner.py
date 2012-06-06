@@ -40,6 +40,7 @@ global_tuner = None;
 loop_tuners = [];
 op_par_loops = [];
 default_arch = Arch.CPU;
+default_file = 'airfoil.cpp';
 
 # reading user input 
 if len(sys.argv) > 1:
@@ -53,9 +54,11 @@ if len(sys.argv) > 1:
         default_arch = Arch.ACCELERATOR;
       else: 
         default_arch = Arch.ANY;
+  if len(sys.arv) > 2:
+    default_file = sys.argv[2];
 
 # parsing the airfoil file
-airfoil_file = open('airfoil.cpp','r');
+airfoil_file = open(default_file,'r');
 lines = airfoil_file.readlines();
 
 found = 0;
@@ -400,32 +403,295 @@ CBRSystemCase = {
                 'occurances' : None
                 }
 
-CBRSystem = {
-            'cases' : []
-            }
+CBRSystem = []
 
 # init CBR
 
-def CBRInit(trainingCases, results):
-  for index in range(0, trainingCases):
+def checkResult(solvedCase):
+  #[correctlyIdentified, fusions, parms];
+  return [True, [], None];  
+
+def opArgDatMatch(opArgDat1, opArgDat2):
+  return opArgDat1['indir_array'] == opArgDat2['indir_array'] and opArgDat1['access'] == opArgDat2['access'] and opArgDat1['name'] == opArgDat2['name'];
+
+def opParLoopArrayMatch(opParLoop1, opParLoop2):
+  return opParLoop1['array'] == opParLoop2['array'];
+
+def checkExistsAndIncr(CBRSystemCase, CBRSystem):
+  sysCase = retrieveSysCase(CBRSystemCase, CBRSystem);
+  if sysCase != None: 
+    sysCase['occurances'] = sysCase['occurances'] + 1;
+  else:
+    CBRSystem.append(CBRSystemCase);
+  return CBRSystem;
+
+def fullCaseEquals(case, CBRSystemCase):
+  return case['case'] == CBRSystemCase['case'] and case['solution'] == CBRSystemCase['solution'];
+
+def equals(case, CBRSystemCase):
+  return case['case'] == CBRSystemCase['case'];
+
+def createCase(CBRCase):
+  newCase['case'] = CBRCase;
+  newCase['solution'] = None;
+  newCase['occurances'] = 1;
+  return newCase;
+
+def retrieveSysCase(CBRSystemCase, CBRSystem):
+  for case in CBRSystem:
+    if fullCaseEquals(case, CBRSystemCase):
+      return case;  
+  return None;
+
+def caseLookup(CBRSystem, unmatchedCase):
+  for case in CBRSystem:
+    if equals(case, unmatchedCase):
+      return case;
+  return None;  
+
+def getLoopInfo(loopName, op_par_loops):
+  for loop in op_par_loops:
+    if loop['loop_name'] == loopName:
+      return loop;
+  return None;
+
+def fusableLoopsWeighting(CBRCase):
+  weighting = 0;
+  for pair in CBRCase['fusable_pairs']:
+    loop1 = getLoopInfo(pair['loop1'], CBRCase['op_par_loops']);
+    loop2 = getLoopInfo(pair['loop2'], CBRCase['op_par_loops']);
+    if opParLoopArrayMatch(loop1, loop2):
+      weighting += 1;
+  return weighting;
+
+def opArgDatSameDataArray(opArgDat1, opArgDat2):
+  return opArgDat1['name'] == opArgDat2['name'] and opArgDat1['indir_array'] == opArgDat2['indir_array'];
+
+def calculateLoopFusionComplexity(loop1, loop2, arch):
+  complexity = 0;
+  noOfEqualArgs = 0;
+  hasEqual = [0 in range (0, len(loop2['op_arg_dat']))];
+  for dataArg1 in loop1['op_arg_dat']:
+    for datArg2 in loop2['op_arg_dat']:
+      if opArgDatMatch(dataArg1, dataArg2):
+        noOfEqualArgs += 1;
+        hasEqual[loop2['op_arg_dat'].index(dataArg2)] +=  1;
+  totalNoOfArgs = len(loop1['op_arg_dat']) + len(loop2['op_arg_dat']);
+  propEqualArgsLoop1 = noOfEqualArgs/len(loop1['op_arg_dat']);
+  propEqualArgsLoop2 = noOfEqualArgs/len(loop2['op_arg_dat']);
+  matched = [0 for i in range(len(loop['op_arg_dat']))];
+  noOfSameDatAndArrayCases = 0;
+  for dataArg1 in loop1['op_arg_dat']:
+    for index in range(0,len(loop2['op_arg_dat'])):
+      if not matched[index] and not opArgDatMatch(dataArg1, dataArg2) and not hasEqual[index]:
+        if opArgDatSameDataArray(dataArg1, loop2['op_arg_dat'][index]):
+          matched[index] += 1;
+          noOfSameDatAndArrayCases += 1;
+  propSimilarArgsLoop1 = noOfSameDatAndArrayCases/len(loop1['op_arg_dat']);
+  propSimilarArgsLoop2 = noOfSameDatAndArrayCases/len(loop2['op_arg_dat']);
+  propDiffArgsLoop1 = (len(loop1['op_arg_dat']) - (noOfEqualCases + noOfSameDatAndArrayCases))/len(loop1['op_arg_dat']);
+  propDiffArgsLoop2 = (len(loop2['op_arg_dat']) - (noOfEqualCases + noOfSameDatAndArrayCases))/len(loop2['op_arg_dat']);
+  if arch == Arch.CPU:
+    sameArgsWeighting = 2;
+    similarArgsWeighting = 1;
+    differentArgsWeighting = -0.5
+    noOfArgsWeighting = -0.25;
+  else: 
+    sameArgsWeighting = 2;
+    similarArgsWeighting = 1;
+    differentArgsWeighting = -0.5;
+    noOfArgsWeighting = -0.5;
+  complexity += (propEqualArgsLoop1 + propEqualArgsLoop2) *sameArgsWeighting * noOfEqualArgs + (
+                (propSimilarArgsLoop1 + propSimilarArgsLoop2) * similarArgsWeighting * noOfSameDatAndArrayCases) + ( 
+                (propDiffArgsLoop1 + propDiffArgsLoop2) * differentArgsWeighting * (totalNoOfArgs - (noOfEqualArgs + noOfSameDatAndArrayCases))) + ( 
+                totalNoOfArgs * noOfArgsWeighting);
+  return complexity;
+  
+def opDatArgsWeighting(CBRCase):
+  weighting = 0;
+  availableLoops = [];
+  for loop in CBRCase['op_par_loops']:
+    availableLoops.append(loop['loop_name']);
+  for pair in CBRCase['fusable_pairs']:
+    loop1 = getLoopInfo(pair['loop1'], CBRCase['op_par_loops']);
+    loop2 = getLoopInfo(pair['loop2'], CBRCase['op_par_loops']);
+    if opParLoopArrayMatch(loop1, loop2):
+      complexity = calculateLoopFusionComplexity(loop1, loop2, CBRCase['arch']);
+      weighting += complexity;    
+  return weighting;
+
+def similarityEstimation(CBRSystem, unmatchedCase):
+  noOfProperties = 6; # 4 - 1 for each arch, 1 for fusable_loops, 1 for op_dats
+  archWeight = 5;
+  weightedProperties = [ [ 0 for i in range(noOfProperties) ] for j in range(len(CBRSystem)) ];
+  for index in range(len(CBRSystem)):
+    weightedProperties[index][CBRSystem[index]['case']['arch']] += archWeight * CBRSystem[index]['occurances'];
+    weightedProperties[index][4] += fusableLoopsWeighting(CBRSystem[index]['case']) * CBRSystem[index]['occurances'];
+    weightedProperties[index][5] += opDatArgsWeighting(CBRSystem[index]['case']) * CBRSystem[index]['occurances'];
+  print weightedProperties; 
+
+  # normalize results
+  for index in range(len(CBRSystem)):
+    for prop in range(noOfProperties):
+      weightedProperties[index][prop] /= sum(weightedProperties[index]);
+
+  print weightedProperties;
+  # here calculate the weight of the intersection
+    
+  noOfIntersectingProperties = 3;
+  weightedIntersection = [ [ 0 for i in range(noOfIntersectingProperties) ] for j in range(len(CBRSystem)) ];
+  maxWeight = 0;
+  maxIndex = 0;
+  maxList = [];
+  for index in range(len(CBRSystem)):
+    intersectingArch = Arch.ANY;
+    if unmatchedCase['case']['arch'] == CBRSystem[index]['case']['arch']:
+      weightedIntersection[index][0] += weightedProperties[index][CBRSystem[index]['case']['arch']];
+      intersectingArch = unmatchedCase['case']['arch'];
+
+    #FIXME! write proper intersection functions...
+    intersectingCase =  {
+                        'arch' : intersectingArch,
+                        'fusable_pairs': list(set(CBRSystem[index]['case']['fusable_pairs']) & set(unmatchedCase['case']['fusable_pairs'])),
+                        'op_par_loops': list(set(CBRSystem[index]['case']['op_par_loops']) & set(unmatchedCase['case']['op_par_loops']))
+                        }
+     
+    weightedIntersection[index][1] += fusableLoopsWeighting(intersectingCase) * weightedProperties[index][4]; 
+    weightedIntersection[index][2] += opDatArgsWeighting(intersectingCase) * weightedProperties[index][5];
+    if sum(weightedIntersection[index]) > maxWeight:
+      maxWeight = sum(weightedIntersection[index]);
+      maxIndex = 0;
+      maxList = [];
+    if sum(weightedIntersection[index]) == maxWeight:
+      maxIndex += 1;
+      maxList.append(CBRSystem[index]);
+
+  if maxIndex > 0:
+    for index1 in range(maxIndex-1):
+      for index2 in range(index1+1,maxIndex):
+        if maxList[index1]['occurances'] < maxList[index2]['occurances']:
+          aux = maxList[index1];
+          maxList[index1] = maxList[index2];
+          maxList[index2] = aux;   
+  
+  return maxList[0];
+
+def bestCaseMatch(CBRSystem, unmatchedCase):
+  tempCase = caseLookup(CBRSystem, unmatchedCase);
+  
+  if tempCase == None or not equals(tempCase, unmatchedCase):
+    tempCase = similarityEstimation(CBRSystem, unmatchedCase); 
+ 
+  unmatchedCase['solution'] = tempCase['solution'];
+  return unmatchedCase;
+
+def retrieve(CBRSystem, newCase):
+  return bestCaseMatch(CBRSystem, newCase);
+
+def reuse(bestCase, newCase):
+  newCase['solution'] = newCase['solution'];
+  return newCase;
+
+def retain(CBRSystem, solvedCase):
+  return checkExistsAndIncr(solvedCase, CBRSystem); 
+ 
+def CBRInit(CBRSystem, trainingCases, results):
+  for index in range(0, len(trainingCases)):
     CBRSystemCase = {
                     'case' : trainingCases[index],
                     'solution' : results[index], 
                     'occurances' : 1
                     };
-    sysCase = retrieveSysCase(CBRSystemCase, CBRSystem);
-    if sysCase != None:
-      # we've seen it before -> increment occurances
-      sysCase['occurances'] = sysCase['occurances']+1;
-    else:
-      CBRSystem.append(CBRSystemCase);
-  return CBRSystem;   
+    CBRSystem = checkExistsAndIncr(CBRSystemCase, CBRSystem);
+  return CBRSystem;
 
-      
+CBRCase1 =  { 
+            'arch' : Arch.CPU,
+            'fusable_pairs' : [],
+            'op_par_loops' : op_par_loops
+            }
+  
+CBRCase2 =  { 
+            'arch' : Arch.CPU,
+            'fusable_pairs' : fusable_pairs,
+            'op_par_loops' : op_par_loops
+            }
+
+CBRSolution1 =  {
+                'loops_to_fuse' : [],
+#                'final_loops' : loops_in_order, - not required
+                'op_warpsize' : 1,
+                'block_size' : 1,
+                'part_size' : 32
+                }
+
+CBRSolution2 =  {
+                'loops_to_fuse' : [{'loop1':"adt_calc", 'loop2':"res_calc"}],
+                'op_warpsize' : 1,
+                'block_size' : 1,
+                'part_size' : 32
+                }
+
+# parsing the tuner_correctness file
+totalCases = 0;
+machineLearningCorrectness = 0;
+tuner_correctness_file = open('tuner_correctness','r');
+tc_lines = tuner_correctness_file.readlines();
+for line in tc_lines:
+  if string.find(line, 'total_cases:') != -1:
+    comp = line.split(':');
+    totalCases = int(comp[1].strip());
+  elif string.find(line, 'correctly_classified:') != -1:
+    comp = line.split(':');
+    machineLearningCorrectness = int(comp[1].strip());
+  else:
+    print 'unidentified line';
+
+trainingCases = [CBRCase1, CBRCase2, CBRCase1];
+results = [CBRSolution1, CBRSolution2, CBRSolution1];
+
+CBRSystem = CBRInit(CBRSystem, trainingCases, results);
 
 # create vector of properties - the case
 
+newCase = {
+          'case' :  {
+                    'arch' : Arch.GPU,
+                    'fusable_pairs' : fusable_pairs, 
+                    'op_par_loops' : op_par_loops
+                    },
+          'solution' : None,
+          'occurances' : 1
+          }
+
 # call machine learning to retrieve best result for the current case
+
+bestCase = retrieve(CBRSystem, newCase);
+ 
+solvedCase = reuse(bestCase, newCase);
+
+totalCases = totalCases+1;
+# we want to make sure that the ML algorithm has chosen the best option
+# we also count the number of occurances of it being correct
+[correctlyIdentified, fusions, params] = checkResult(solvedCase);
+if correctlyIdentified:
+  machineLearningCorrectness = machineLearningCorrectness + 1;
+  CBRSystem = retain(CBRSystem, solvedCase);
+else:
+  adjustedCase['case'] = solvedCase['case'];
+  adjustedCase['solution'] =  { 
+                              'loops_to_fuse' : fusions,
+                              'op_warpsize' : params['op_warpsize'],
+                              'block_size' : params['block_size'],
+                              'part_size' : params['part_size']
+                              } 
+  adjustedCase['occurances']= 1
+  CBRSystem = retain(CBRSystem, adjustedCase);
+
+# store correctness results to file
+tuner_correctness_file = open('tuner_correctness','w');
+correctness_info = ['total_cases: ' + str(totalCases) + '\n', 'correctly_classified: ' + str(machineLearningCorrectness)]
+tuner_correctness_file.writelines(correctness_info);
 
 # transform the best case into compiler flags
 
