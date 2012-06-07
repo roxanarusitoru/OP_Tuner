@@ -162,6 +162,12 @@ int main(int argc, char *argv[]){
 
   op_init(argc,argv,2);
 
+  op_tuner* global_tuner = op_create_global_tuner();  
+  global_tuner->op_warpsize = 1;
+  global_tuner->block_size = 64;
+  global_tuner->part_size = 128;
+  global_tuner->cache_line_size = 128;
+
   // declare sets, pointers, datasets and global constants
 
   op_set nodes  = op_decl_set(nnode,  "nodes");
@@ -190,6 +196,26 @@ int main(int argc, char *argv[]){
   op_decl_const(1,REAL_STRING,&alpha);
   op_decl_const(4,REAL_STRING,qinf  );
 
+  op_tuner* save_soln_tuner = op_create_tuner("save_soln");
+  save_soln_tuner->part_size = 64;
+  save_soln_tuner->block_size = 4;
+
+  op_tuner* adt_calc_tuner = op_create_tuner("adt_calc");
+  adt_calc_tuner->part_size = 64;
+  adt_calc_tuner->block_size = 4;
+
+  op_tuner* res_calc_tuner = op_create_tuner("res_calc");
+  res_calc_tuner->part_size = 64;
+  res_calc_tuner->block_size = 4;
+
+  op_tuner* bres_calc_tuner = op_create_tuner("bres_calc");
+  bres_calc_tuner->part_size = 64;
+  bres_calc_tuner->block_size = 4;
+ 
+  op_tuner* update_tuner = op_create_tuner("update");
+  update_tuner->part_size = 64;
+  update_tuner->block_size = 4;
+
     op_diagnostic_output();
 
 // main time-marching loop
@@ -202,7 +228,8 @@ int main(int argc, char *argv[]){
 
     op_par_loop(save_soln,"save_soln", cells,
                 op_arg_dat(p_q,   -1,OP_ID, 4,REAL_STRING,OP_READ ),
-                op_arg_dat(p_qold,-1,OP_ID, 4,REAL_STRING,OP_WRITE));
+                op_arg_dat(p_qold,-1,OP_ID, 4,REAL_STRING,OP_WRITE),
+                save_soln_tuner);
 
 //  predictor/corrector update loop
 
@@ -216,7 +243,9 @@ int main(int argc, char *argv[]){
                   op_arg_dat(p_x,   2,pcell, 2,REAL_STRING,OP_READ ),
                   op_arg_dat(p_x,   3,pcell, 2,REAL_STRING,OP_READ ),
                   op_arg_dat(p_q,  -1,OP_ID, 4,REAL_STRING,OP_READ ),
-                  op_arg_dat(p_adt,-1,OP_ID, 1,REAL_STRING,OP_WRITE));
+                  op_arg_dat(p_adt,-1,OP_ID, 1,REAL_STRING,OP_WRITE),
+                  adt_calc_tuner);
+
 //    calculate flux residual
 
       op_par_loop(res_calc,"res_calc",edges,
@@ -227,7 +256,8 @@ int main(int argc, char *argv[]){
                   op_arg_dat(p_adt,  0,pecell,1,REAL_STRING,OP_READ),
                   op_arg_dat(p_adt,  1,pecell,1,REAL_STRING,OP_READ),
                   op_arg_dat(p_res,  0,pecell,4,REAL_STRING,OP_INC ),
-                  op_arg_dat(p_res,  1,pecell,4,REAL_STRING,OP_INC ));
+                  op_arg_dat(p_res,  1,pecell,4,REAL_STRING,OP_INC ),
+                  res_calc_tuner);
 
       op_par_loop(bres_calc,"bres_calc",bedges,
                   op_arg_dat(p_x,     0,pbedge, 2,REAL_STRING,OP_READ),
@@ -235,7 +265,8 @@ int main(int argc, char *argv[]){
                   op_arg_dat(p_q,     0,pbecell,4,REAL_STRING,OP_READ),
                   op_arg_dat(p_adt,   0,pbecell,1,REAL_STRING,OP_READ),
                   op_arg_dat(p_res,   0,pbecell,4,REAL_STRING,OP_INC ),
-                  op_arg_dat(p_bound,-1,OP_ID  ,1,"int",  OP_READ));
+                  op_arg_dat(p_bound,-1,OP_ID  ,1,"int",  OP_READ),
+                  bres_calc_tuner);
 
 //    update flow field
 
@@ -246,7 +277,8 @@ int main(int argc, char *argv[]){
                   op_arg_dat(p_q,   -1,OP_ID, 4,REAL_STRING,OP_WRITE),
                   op_arg_dat(p_res, -1,OP_ID, 4,REAL_STRING,OP_RW   ),
                   op_arg_dat(p_adt, -1,OP_ID, 1,REAL_STRING,OP_READ ),
-                  op_arg_gbl(&rms,1,REAL_STRING,OP_INC));
+                  op_arg_gbl(&rms,1,REAL_STRING,OP_INC),
+                  update_tuner);
     }
 
 //  print iteration history

@@ -5,6 +5,7 @@ from sys import path, argv
 import sys
 import string
 import pycparser
+import math
 #import ~/Downloads/pycparser-2.06/pycparser/c_parser.py
 
 #import inspect
@@ -41,6 +42,9 @@ loop_tuners = [];
 op_par_loops = [];
 default_arch = Arch.CPU;
 default_file = 'airfoil.cpp';
+
+#possible param values
+possible_values_blk_part_size = [4, 8, 16, 32, 64, 128, 256, 512];  
 
 # reading user input 
 if len(sys.argv) > 1:
@@ -243,7 +247,6 @@ for loop_tuner in loop_tuners:
   for loop in op_par_loops:
     if loop_tuner['var_name'] == loop['tuner'][0]['name']:
       loop_tuner['active'] = 1;
-
 # now we need to decide if we have any fusable loops
 # we perform basic control flow
   
@@ -340,7 +343,7 @@ for line in core_lines:
       if isEndOfStatement(line) and len(CFInfoRootNode['children']) > 0:
         nestingLevel = nestingLevel - 1;
         
-# print CFInfoRootNode;
+#print CFInfoRootNode;
 
 # now we have the Control Flow Information so we can decide which loops we can fuse
 # - 2 options: try all OR just go by nesting level. 
@@ -377,7 +380,8 @@ for index in range(len(loops_in_order)-1):
                      }
       fusable_pairs.append(fusable_pair);
 
-# print fusable_pairs;
+print fusable_pairs;
+print loops_in_order;
 # print op_par_loops;
 
 # we now do parmeter analysis to see if we can/should really fuse them
@@ -392,7 +396,7 @@ CBRCase = {
           }
 CBRSolution = {
               'loops_to_fuse' : [],
-              'final_loops' : [],
+#              'final_loops' : [],
               'op_warpsize' : [],
               'block_size' : [],
               'part_size' : []
@@ -520,6 +524,51 @@ def opDatArgsWeighting(CBRCase):
       weighting += complexity;    
   return weighting;
 
+def fusablePairsIntersection(fusablePairs1, fusablePairs2):
+  intersectingFusablePairs = [];
+  for pair1 in fusablePairs1:
+    for pair2 in fusablePairs2:
+      if pair1 == pair2:
+        intersectingFusablePairs.append(pair1);
+  return intersectingFusablePairs;
+
+def opParLoopsIntersection(op_par_loops1, op_par_loops2):
+  intersectingOpParLoops = [];
+  for op_par_loop1 in op_par_loops1:
+    for op_par_loop2 in op_par_loops2:
+      if op_par_loop1 == op_par_loop2:
+        intersectingOpParLoops.append(op_par_loop1);
+  return intersectingOpParLoops;
+
+def opArgDatComplexity(loop, arch):
+  complexity = 0;
+  dataSameArrayAccesses = [];
+  for dataArg in loop['op_arg_dat']:
+    found = False;
+    for index in range(0, len(dataSameArrayAccesses)):
+      if dataArg['name'] == dataSameArrayAccesses[index]['name'] and (
+         dataArg['indir_array'] == dataSameArrayAccesses[index]['indir_array']):
+        dataSameArrayAccesses[index]['occurances'] += 1;
+        found = True;
+    if not found: 
+      dataArrayAccess = {
+                        'name' : dataArg['name'],
+                        'indir_array' : dataArg['indir_array'],
+                        'occurances' : 1 
+                        }
+      dataSameArrayAccesses.append(dataArrayAccess);
+  
+  noOfDifferentDataArrayArgsComplexity = 1;
+  if arch == Arch.GPU:
+    noOfDifferentDataArrayArgsComplexity = 1.1;
+  complexity +=  noOfDifferentDataArrayArgsComplexity * len(dataSameArrayAccesses);
+  
+  totalNoOfArgsComplexity = 0.25;
+  if arch == Arch.GPU:
+    totalNoOfArgsComplexity = 0.5; 
+  complexity += len(loop['op_arg_dat']) * totalNoOfArgsComplexity;
+  return complexity;
+
 def similarityEstimation(CBRSystem, unmatchedCase):
   noOfProperties = 6; # 4 - 1 for each arch, 1 for fusable_loops, 1 for op_dats
   archWeight = 5;
@@ -549,11 +598,10 @@ def similarityEstimation(CBRSystem, unmatchedCase):
       weightedIntersection[index][0] += weightedProperties[index][CBRSystem[index]['case']['arch']];
       intersectingArch = unmatchedCase['case']['arch'];
 
-    #FIXME! write proper intersection functions...
     intersectingCase =  {
                         'arch' : intersectingArch,
-                        'fusable_pairs': list(set(CBRSystem[index]['case']['fusable_pairs']) & set(unmatchedCase['case']['fusable_pairs'])),
-                        'op_par_loops': list(set(CBRSystem[index]['case']['op_par_loops']) & set(unmatchedCase['case']['op_par_loops']))
+                        'fusable_pairs': fusablePairsIntersection(CBRSystem[index]['case']['fusable_pairs'], unmatchedCase['case']['fusable_pairs']),
+                        'op_par_loops': opParLoopsIntersection(CBRSystem[index]['case']['op_par_loops'], unmatchedCase['case']['op_par_loops'])
                         }
      
     weightedIntersection[index][1] += fusableLoopsWeighting(intersectingCase) * weightedProperties[index][4]; 
@@ -585,8 +633,96 @@ def bestCaseMatch(CBRSystem, unmatchedCase):
   unmatchedCase['solution'] = tempCase['solution'];
   return unmatchedCase;
 
+def checkBestMatch(CBRSystem, newCase, bestMatch):
+  maxComplexity = 0;
+  loopFusionComplexity = [];
+  for pair in newCase['case']['fusable_pairs']:
+    loop1 = getLoopInfo(pair['loop1'], newCase['case']['op_par_loops']);
+    loop2 = getLoopInfo(pair['loop2'], newCase['case']['op_par_loops']); 
+    if opParLoopArrayMatch(loop1, loop2):
+      complexity =  calculateLoopFusionComplexity(loop1, loop2, CBRCase['arch'])
+      fusionComplexity =  {
+                          'fusion' : pair,
+                          'complexity' : complexity
+                          }
+      loopFusionComplexity.append(fusionComplexity);
+      if complexity > maxComplexity:
+        maxComplexity = complexity;
+
+  threshold = 0;
+  wantedFusion = None;  
+  if maxComplexity > 0:
+    # we have a good loop fusion
+    # now we check if the bestMatch does it;
+    loopsToFuse = bestMatch['solution']['loops_to_fuse']; 
+    wantedFusion = None;
+    for fusion in loopFusionComplexity:
+      if fusion['complexity'] == maxComplexity:
+        wantedFusion = fusion['fusion'];
+    if loopsToFuse.index(wantedFusion) != -1:
+      return [True, bestMatch];
+  else:
+    if newCase['case']['arch'] == Arch.CPU and bestMatch['solution']['op_warpsize'] == 1:
+      return [True, bestMatch];
+     
+  # else, we clearly have a better case, so we shall create a new best case
+  
+  op_warpsize = 1;
+  if newCase['case']['arch'] == Arch.GPU:
+    op_warpsize = 32;
+
+  overallMaxComplexity = 0;
+    
+  for loop in newCase['case']['op_par_loops']:
+    complexity = opArgDatComplexity(loop, newCase['case']['arch']);
+    if complexity > overallMaxComplexity:
+      overallMaxComplexity = complexity;
+
+  if maxComplexity > overallMaxComplexity:
+    overallMaxComplexity = maxComplexity;
+  
+  complexityThresholdForDiffValuePartBlkSize = 4;
+  
+  temp_block_size = 128;
+  temp_part_size = 128;
+  referenceValue = 256;
+  if newCase['case']['arch'] == Arch.CPU:
+    temp_block_size =  1/overallMaxComplexity * referenceValue;
+  else:
+    temp_block_size = overallMaxComplexity/2 * referenceValue;
+
+  diffArray = [];
+  for val in possible_values_blk_part_size:
+    diffArray.append(math.fabs(temp_block_size - val));
+  minDiff = min(diffArray);
+  for index in range(len(possible_values_blk_part_size)):
+    if (diffArray[index] == minDiff):
+      temp_block_size = possible_values_blk_part_size[index];
+  if overallMaxComplexity >= complexityThresholdForDiffValuePartBlkSize or temp_block_size < 512:
+    temp_part_size = temp_block_size;
+  else:
+    temp_part_size = 2 * temp_block_size; 
+ 
+  newSolution = {
+                'loops_to_fuse' : wantedFusion,
+                'op_warpsize' : op_warpsize,
+                'block_size' : temp_block_size, 
+                'part_size' : temp_part_size
+                }
+
+  newBestMatch =  {
+                  'case' : newCase['case'],
+                  'solution' : newSolution,
+                  'occurances' : 1
+                  }
+  return [False, newBestMatch]; 
+
 def retrieve(CBRSystem, newCase):
-  return bestCaseMatch(CBRSystem, newCase);
+  bestMatch =  bestCaseMatch(CBRSystem, newCase);
+  
+  # failsafe no 1 - we need to see if this is really a good option.
+  # this situation might have not been encountered
+  betterMatch = checkBestMatch(CBRSystem, newCase, bestMatch);
 
 def reuse(bestCase, newCase):
   newCase['solution'] = newCase['solution'];
