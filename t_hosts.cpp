@@ -7,6 +7,14 @@ extern float gam;
 extern float gm1;
 extern float mach;
 extern float qinf[4UL];
+int threadsPerBlockSize_adt_calc = 512;
+int setPartitionSize_adt_calc = 0;
+int threadsPerBlockSize_bres_calc = 512;
+int setPartitionSize_bres_calc = 0;
+int threadsPerBlockSize_res_calc = 512;
+int setPartitionSize_res_calc = 0;
+int threadsPerBlockSize_save_soln = 512;
+int threadsPerBlockSize_update = 512;
 void adt_calc_host(const char *userSubroutine,op_set set,op_arg opDat1,op_arg opDat2,op_arg opDat3,op_arg opDat4,op_arg opDat5,op_arg opDat6)
 {
   size_t blocksPerGrid;

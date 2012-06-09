@@ -50,6 +50,9 @@ def isExternStatement(line):
 def isHashDefStatement(line):
   return (string.find(line, '#define') != -1 or string.find(line, '# define') != -1);
 
+def isDeclarationStatement(line):
+  return (string.find(line, '=') != -1);
+
 def addToCFInfo(statementName, statementDepth, CFInfoRootNode):
   currentDepth = 1;
   currentNode = CFInfoRootNode;
@@ -136,6 +139,8 @@ for line in gen_lines:
   if isIncludeStatement(line):
     lines_host_file.append(line);
   if isExternStatement(line):
+    lines_host_file.append(line);
+  if isDeclarationStatement(line):
     lines_host_file.append(line);
   if isInlineVoidMethod(line):
     [lines_kernel_file, gen_lines] = addLinesToFileAndRemoveFromList(lines_kernel_file, gen_lines);
