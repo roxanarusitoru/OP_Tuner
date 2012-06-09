@@ -343,7 +343,7 @@ for line in core_lines:
       if isEndOfStatement(line) and len(CFInfoRootNode['children']) > 0:
         nestingLevel = nestingLevel - 1;
         
-#print CFInfoRootNode;
+print CFInfoRootNode;
 
 # now we have the Control Flow Information so we can decide which loops we can fuse
 # - 2 options: try all OR just go by nesting level. 
