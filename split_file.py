@@ -35,8 +35,20 @@ def isIncludeStatement(line):
 def isIfDefStatement(line):
   return (string.find(line, '#ifdef') != -1 or string.find(line, '# ifdef') != -1);
 
+def isEndIfDefStatement(line):
+  return (string.find(line, '#endif') != -1 or string.find(line, '# endif') != -1);
+  
 def isHostMethod(line):
   return (string.find(line, '_host') != -1);
+
+def isInlineVoidMethod(line):
+  return (string.find(line, 'inline void') != -1);
+
+def isExternStatement(line):
+  return (string.find(line, 'extern ') != -1);  
+
+def isHashDefStatement(line):
+  return (string.find(line, '#define') != -1 or string.find(line, '# define') != -1);
 
 def addToCFInfo(statementName, statementDepth, CFInfoRootNode):
   currentDepth = 1;
@@ -77,6 +89,29 @@ def getParentCFInfoNode(nodeName, CFInfoRootNode):
         if node['name'] == nodeName:
           return desiredNode;
 
+def addLinesToFileAndRemoveFromList(file_lines, gen_lines):
+  openCurlyBraces = 0;
+  closedCurlyBraces = 0;
+  line_index = gen_lines.index(line);
+  initial_line = line_index;
+  while not isBeginningOfStatement(gen_lines[line_index]):
+    line_index += 1;
+  openCurlyBraces = 1;
+  if isEndOfStatement(gen_lines[line_index]):
+    closedCurlyBraces += 1;
+  line_index += 1;
+  while openCurlyBraces != closedCurlyBraces: 
+    if isBeginningOfStatement(gen_lines[line_index]):
+      openCurlyBraces += 1;
+    if isEndOfStatement(gen_lines[line_index]):
+      closedCurlyBraces += 1;
+    line_index += 1;
+  final_line = line_index;
+  while final_line-initial_line > 0:
+    file_lines.append(gen_lines[initial_line]);
+    gen_lines.remove(gen_lines[initial_line]);
+    final_line -= 1;
+  return [file_lines, gen_lines];
 
 openCurlyBraces = 0;
 closedCurlyBraces = 0;
@@ -85,27 +120,36 @@ nestingLevel = 1;
 index = 0;
 
 for line in gen_lines:
-  if isKernelMethod(line):
-    openCurlyBraces = 0;
-    closedCurlyBraces = 0;
-    line_index = gen_lines.index(line);
-    initial_line = line_index;
-    while not isBeginningOfStatement(gen_lines[line_index]):
+  if isIfDefStatement(line):
+    initial_line = gen_lines.index(line);
+    line_index = initial_line;
+    while not isEndIfDefStatement(line):
       line_index += 1;
-    openCurlyBraces = 1;
-    if isEndOfStatement(gen_lines[line_index]):
-      closedCurlyBraces += 1;
-    line_index += 1;
-    while openCurlyBraces != closedCurlyBraces: 
-      if isBeginningOfStatement(gen_lines[line_index]):
-        openCurlyBraces += 1;
-      if isEndOfStatement(gen_lines[line_index]):
-        closedCurlyBraces += 1;
-      line_index += 1;
-    final_line = line_index;
-    while final_line-initial_line > 0:
+    while line_index - initial_line > 1:
       lines_host_file.append(gen_lines[initial_line]);
       gen_lines.remove(gen_lines[initial_line]);
-      final_line -= 1;
+      line_index -= 1;
+    lines_host_file.append(gen_lines[initial_line]);
+  if isHashDefStatement(line):
+    if string.find(line, 'ROUND_UP') != -1 or string.find(line, 'MIN') != -1 or string.find(line, 'ZERO_float') != -1:
+      lines_kernel_file.append(line);
+  if isIncludeStatement(line):
+    lines_host_file.append(line);
+  if isExternStatement(line):
+    lines_host_file.append(line);
+  if isInlineVoidMethod(line):
+    [lines_kernel_file, gen_lines] = addLinesToFileAndRemoveFromList(lines_kernel_file, gen_lines);
+  if isKernelMethod(line):
+    [lines_kernel_file, gen_lines] = addLinesToFileAndRemoveFromList(lines_kernel_file, gen_lines); 
+  if isHostMethod(line):
+    [lines_host_file, gen_lines] = addLinesToFileAndRemoveFromList(lines_host_file, gen_lines); 
 
 
+hosts_file = open('t_hosts.cpp','w');
+kernels_file = open('t_kernels.cl','w');
+
+hosts_file.writelines(lines_host_file);
+
+kernels_file.writelines(lines_kernel_file);
+
+print gen_lines;
