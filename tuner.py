@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 
+from __future__ import division
 from os import sep
 from sys import path, argv
 import sys
 import string
 import pycparser
 import math
+import copy
 #import ~/Downloads/pycparser-2.06/pycparser/c_parser.py
 
 #import inspect
@@ -58,7 +60,7 @@ if len(sys.argv) > 1:
         default_arch = Arch.ACCELERATOR;
       else: 
         default_arch = Arch.ANY;
-  if len(sys.arv) > 2:
+  if len(sys.argv) > 2:
     default_file = sys.argv[2];
 
 # parsing the airfoil file
@@ -193,7 +195,8 @@ for line in new_lines:
         if ";" in new_lines[line_index]:
           current_loop = current_loop + 1;
           break;
-  
+
+loopIndex = -1;
 for loop in op_par_loop_relevant_lines:
   for comp in loop:
     comp = comp.strip();
@@ -203,26 +206,44 @@ for loop in op_par_loop_relevant_lines:
       temp_comp = temp_comp.pop();
       temp_comp = temp_comp.split(",");
       temp_comp[1] = temp_comp[1].replace("\"", '');
-      op_par_loops.append({ 'loop_name' : temp_comp.pop(0),
-                            'kernel_name' : temp_comp.pop(0),
-                            'array' : temp_comp.pop(0),
-                            'op_arg_dat' : [],
-                            'op_arg_gbl' : [],
-                            'tuner' : []
-                          });
+      loop_name = temp_comp.pop(0);
+      found = 0;
+      for checkLoop in op_par_loops:
+        if checkLoop['loop_name'] == loop_name:
+          found = 1;
+      if not found:
+        op_par_loops.append({ 'loop_name' : loop_name,
+                              'kernel_name' : temp_comp.pop(0),
+                              'array' : temp_comp.pop(0),
+                              'op_arg_dat' : [],
+                              'op_arg_gbl' : [],
+                              'tuner' : []
+                            });
+        loopIndex += 1;
+      else:
+        temp_comp.pop(0);
+        temp_comp.pop(0);
     elif "op_arg_dat" in comp:
       temp_comp = comp.split("op_arg_dat(");
       temp_comp = temp_comp.pop();
       temp_comp = temp_comp.split(",");
       temp_comp[5] = temp_comp[5].replace(')','');
       temp_comp[5] = temp_comp[5].replace(';','');
-      op_par_loops[op_par_loop_relevant_lines.index(loop)]['op_arg_dat'].append({ 'name' : temp_comp.pop(0),
-                                                                                  'access' : temp_comp.pop(0),
-                                                                                  'indir_array' : temp_comp.pop(0),
-                                                                                  'indir_array_access' : temp_comp.pop(0),
-                                                                                  'type' : temp_comp.pop(0),
-                                                                                  'operation_type' : temp_comp.pop(0)
-                                                                                });
+      new_op_arg_dat = { 'name' : temp_comp.pop(0),
+                         'access' : temp_comp.pop(0),
+                         'indir_array' : temp_comp.pop(0),
+                         'indir_array_access' : temp_comp.pop(0),
+                         'type' : temp_comp.pop(0),
+                         'operation_type' : temp_comp.pop(0)
+                       };
+      found = 0;
+      #for arg in op_par_loops[op_par_loop_relevant_lines.index(loop)]['op_arg_dat']:
+      for arg in op_par_loops[loopIndex]['op_arg_dat']:
+        if arg == new_op_arg_dat:
+          found = 1;
+      if not found:
+        #op_par_loops[op_par_loop_relevant_lines.index(loop)]['op_arg_dat'].append(new_op_arg_dat);
+        op_par_loops[loopIndex]['op_arg_dat'].append(new_op_arg_dat);
     elif "op_arg_gbl" in comp:
       temp_comp = comp.split("op_arg_gbl(");
       temp_comp = temp_comp.pop();
@@ -230,17 +251,32 @@ for loop in op_par_loop_relevant_lines:
       temp_comp[3] = temp_comp[3].replace(')','');
       temp_comp[3] = temp_comp[3].replace(';','');  
       temp_comp[0] = temp_comp[0].replace('&','');
-      op_par_loops[op_par_loop_relevant_lines.index(loop)]['op_arg_gbl'].append({ 'name' : temp_comp.pop(0),
-                                                                                  'dimension' : temp_comp.pop(0),
-                                                                                  'type' : temp_comp.pop(0),
-                                                                                  'operation_type' : temp_comp.pop(0)
-                                                                                });
+      new_op_arg_gbl = { 'name' : temp_comp.pop(0),
+                         'dimension' : temp_comp.pop(0),
+                         'type' : temp_comp.pop(0),
+                         'operation_type' : temp_comp.pop(0)
+                       };
+      found = 0;
+      #for gbl_arg in op_par_loops[op_par_loop_relevant_lines.index(loop)]['op_arg_gbl']:
+      for gbl_arg in op_par_loops[loopIndex]['op_arg_gbl']:
+        if gbl_arg == new_op_arg_gbl:
+          found = 1;
+      if not found:
+        op_par_loops[loopIndex]['op_arg_gbl'].append(new_op_arg_gbl);
+        #op_par_loops[op_par_loop_relevant_lines.index(loop)]['op_arg_gbl'].append(new_op_arg_gbl);
     else:
       # this is the tuner argument
       temp_comp = comp;
       temp_comp = temp_comp.replace(');','');
-      op_par_loops[op_par_loop_relevant_lines.index(loop)]['tuner'].append({  'name' : temp_comp
-                                                                           });
+      found = 0;
+      #for tuner in op_par_loops[op_par_loop_relevant_lines.index(loop)]['tuner']:
+      for tuner in op_par_loops[loopIndex]['tuner']:
+        if tuner['name'] == temp_comp:
+          found = 1;
+      if not found:
+        #op_par_loops[op_par_loop_relevant_lines.index(loop)]['tuner'].append({  'name' : temp_comp
+        #                                                                   });
+        op_par_loops[loopIndex]['tuner'].append({'name' : temp_comp });
 
 #activate appropriate tuners
 for loop_tuner in loop_tuners:
@@ -249,8 +285,13 @@ for loop_tuner in loop_tuners:
       loop_tuner['active'] = 1;
 # now we need to decide if we have any fusable loops
 # we perform basic control flow
-  
+
 # helper functions
+
+def getOriginalLoopName(loopTag, loopNameMap):
+  for loop in loopNameMap:
+    if loop['tag'] == loopTag:
+      return loop['original'];
 
 def isIfStatement(line):
   return ('if(' or 'if (' in line);
@@ -319,7 +360,9 @@ CFInfoRootNode = {  'name' : 'ROOT',
                  }
 nestingLevel = 1;
 orderOfAddition = [];
+opParLoopNameMap = [];
 index = 0;
+indexOpParLoops = 0;
 for line in core_lines:
   if isForLoopStatement(line):
     new_name = "for" + str(index);
@@ -337,13 +380,19 @@ for line in core_lines:
         if '"' in comp:
           comp = comp.strip('"');
           new_name = comp;
+      opParLoopNameMap.append({'original' : new_name, 'tag' : new_name + str(indexOpParLoops)});
+      new_name += str(indexOpParLoops);
       CFInfoRootNode = addToCFInfo(new_name, nestingLevel, CFInfoRootNode);
       orderOfAddition.append(new_name);
+      indexOpParLoops += 1;
     else:
       if isEndOfStatement(line) and len(CFInfoRootNode['children']) > 0:
         nestingLevel = nestingLevel - 1;
         
-print CFInfoRootNode;
+#print CFInfoRootNode;
+
+def getOriginalOpParLoopName(loopTag):
+  return getOriginalLoopName(loopTag, opParLoopNameMap);
 
 # now we have the Control Flow Information so we can decide which loops we can fuse
 # - 2 options: try all OR just go by nesting level. 
@@ -358,7 +407,7 @@ for loop in orderOfAddition:
     loops_in_order.append(loop);
 
 loops_in_order.append(loops_in_order[0]);
-
+#print loops_in_order;
 fusable_pairs = [];
 
 for index in range(len(loops_in_order)-1):
@@ -379,11 +428,20 @@ for index in range(len(loops_in_order)-1):
                       'loop2' : loop2['name']
                      }
       fusable_pairs.append(fusable_pair);
+#print fusable_pairs;
+#print loops_in_order;
+#print op_par_loops;
 
-print fusable_pairs;
-print loops_in_order;
-# print op_par_loops;
+#revert naming of fusable loops to original
+tagged_fusable_pairs = copy.deepcopy(fusable_pairs);
+fusable_pairs = [];
 
+for pair in tagged_fusable_pairs:
+  fusable_pairs.append({'loop1' : getOriginalOpParLoopName(pair['loop1']),
+                        'loop2' : getOriginalOpParLoopName(pair['loop2'])});
+
+
+#print fusable_pairs;
 # we now do parmeter analysis to see if we can/should really fuse them
 # let's leave this for the machine learning -> it is machine learning stuff
 
@@ -391,7 +449,7 @@ print loops_in_order;
 
 CBRCase = {
           'arch' : Arch.ANY,
-          'fusable_pairs' : [],
+          'fusable_pairs' : [], 
           'op_par_loops' : []     
           }
 CBRSolution = {
@@ -409,7 +467,50 @@ CBRSystemCase = {
 
 CBRSystem = []
 
+# case base:
+  
+CBRCase1 =  { 
+            'arch' : Arch.CPU,
+            'fusable_pairs' : [{'loop2': 'res_calc', 'loop1': 'adt_calc'}, {'loop2': 'bres_calc', 'loop1': 'res_calc'}, {'loop2': 'update', 'loop1': 'bres_calc'}],
+            'op_par_loops' : [{'loop_name': 'save_soln', 'op_arg_dat': [{'indir_array': 'OP_ID', 'name': 'p_q', 'indir_array_access': '4', 'access': '-1', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'OP_ID', 'name': 'p_qold', 'indir_array_access': '4', 'access': '-1', 'operation_type': 'OP_WRITE', 'type': 'REAL_STRING'}], 'op_arg_gbl': [], 'kernel_name': 'save_soln', 'tuner': [], 'array': 'cells'}, {'loop_name': 'adt_calc', 'op_arg_dat': [{'indir_array': 'pcell', 'name': 'p_x', 'indir_array_access': '2', 'access': '0', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pcell', 'name': 'p_x', 'indir_array_access': '2', 'access': '1', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pcell', 'name': 'p_x', 'indir_array_access': '2', 'access': '2', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pcell', 'name': 'p_x', 'indir_array_access': '2', 'access': '3', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'OP_ID', 'name': 'p_q', 'indir_array_access': '4', 'access': '-1', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'OP_ID', 'name': 'p_adt', 'indir_array_access': '1', 'access': '-1', 'operation_type': 'OP_WRITE', 'type': 'REAL_STRING'}], 'op_arg_gbl': [], 'kernel_name': 'adt_calc', 'tuner': [], 'array': 'cells'}, {'loop_name': 'res_calc', 'op_arg_dat': [{'indir_array': 'pedge', 'name': 'p_x', 'indir_array_access': '2', 'access': '0', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pedge', 'name': 'p_x', 'indir_array_access': '2', 'access': '1', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pecell', 'name': 'p_q', 'indir_array_access': '4', 'access': '0', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pecell', 'name': 'p_q', 'indir_array_access': '4', 'access': '1', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pecell', 'name': 'p_adt', 'indir_array_access': '1', 'access': '0', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pecell', 'name': 'p_adt', 'indir_array_access': '1', 'access': '1', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pecell', 'name': 'p_res', 'indir_array_access': '4', 'access': '0', 'operation_type': 'OP_INC', 'type': 'REAL_STRING'}, {'indir_array': 'pecell', 'name': 'p_res', 'indir_array_access': '4', 'access': '1', 'operation_type': 'OP_INC', 'type': 'REAL_STRING'}], 'op_arg_gbl': [], 'kernel_name': 'res_calc', 'tuner': [], 'array': 'edges'}, {'loop_name': 'bres_calc', 'op_arg_dat': [{'indir_array': 'pbedge', 'name': 'p_x', 'indir_array_access': '2', 'access': '0', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pbedge', 'name': 'p_x', 'indir_array_access': '2', 'access': '1', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pbecell', 'name': 'p_q', 'indir_array_access': '4', 'access': '0', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pbecell', 'name': 'p_adt', 'indir_array_access': '1', 'access': '0', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'pbecell', 'name': 'p_res', 'indir_array_access': '4', 'access': '0', 'operation_type': 'OP_INC', 'type': 'REAL_STRING'}, {'indir_array': 'OP_ID', 'name': 'p_bound', 'indir_array_access': '1', 'access': '-1', 'operation_type': 'OP_READ', 'type': '"int"'}], 'op_arg_gbl': [], 'kernel_name': 'bres_calc', 'tuner': [], 'array': 'bedges'}, {'loop_name': 'update', 'op_arg_dat': [{'indir_array': 'OP_ID', 'name': 'p_qold', 'indir_array_access': '4', 'access': '-1', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}, {'indir_array': 'OP_ID', 'name': 'p_q', 'indir_array_access': '4', 'access': '-1', 'operation_type': 'OP_WRITE', 'type': 'REAL_STRING'}, {'indir_array': 'OP_ID', 'name': 'p_res', 'indir_array_access': '4', 'access': '-1', 'operation_type': 'OP_RW', 'type': 'REAL_STRING'}, {'indir_array': 'OP_ID', 'name': 'p_adt', 'indir_array_access': '1', 'access': '-1', 'operation_type': 'OP_READ', 'type': 'REAL_STRING'}], 'op_arg_gbl': [{'operation_type': 'OP_INC', 'type': 'REAL_STRING', 'name': 'rms', 'dimension': '1'}], 'kernel_name': 'update', 'tuner': [], 'array': 'cells'}]
+            }
+
+CBRSolution1 =  {
+                'loops_to_fuse' : [],
+                'op_warpsize' : 1,
+                'block_size' : 4,
+                'part_size' : 4
+                }
+
+CBRCase2 = copy.deepcopy(CBRCase1);
+CBRCase2['arch'] = Arch.GPU;
+
+CBRSolution2 =  {
+                'loops_to_fuse' : [],
+                'op_warpsize' : 32,
+                'block_size' : 256,
+                'part_size' : 256
+                }
+
+CBRCase3 =  copy.deepcopy(CBRCase1);
+CBRCase3['arch'] = Arch.ANY;
+
+CBRSolution3 = copy.deepcopy(CBRSolution1);
+
+CBRCase4 = copy.deepcopy(CBRCase1);
+CBRCase4['arch'] = Arch.ACCELERATOR;
+
+CBRSolution4 = copy.deepcopy(CBRSolution1);
+
+trainingCases = [CBRCase1, CBRCase2, CBRCase1, CBRCase3, CBRCase4];
+results = [CBRSolution1, CBRSolution2, CBRSolution1, CBRSolution3, CBRSolution4];
+
+def retrieveTrainingData():
+  return [trainingCases, results];
+
 # init CBR
+
+betterMatchFound = False;
 
 def checkResult(solvedCase):
   #[correctlyIdentified, fusions, parms];
@@ -453,6 +554,9 @@ def caseLookup(CBRSystem, unmatchedCase):
       return case;
   return None;  
 
+def checkComparable(CBRCase1, CBRCase2):
+  return CBRCase1['op_par_loops'] == CBRCase2['op_par_loops'];
+
 def getLoopInfo(loopName, op_par_loops):
   for loop in op_par_loops:
     if loop['loop_name'] == loopName:
@@ -474,16 +578,16 @@ def opArgDatSameDataArray(opArgDat1, opArgDat2):
 def calculateLoopFusionComplexity(loop1, loop2, arch):
   complexity = 0;
   noOfEqualArgs = 0;
-  hasEqual = [0 in range (0, len(loop2['op_arg_dat']))];
+  hasEqual = [0 for i in range (len(loop2['op_arg_dat']))];
   for dataArg1 in loop1['op_arg_dat']:
-    for datArg2 in loop2['op_arg_dat']:
+    for dataArg2 in loop2['op_arg_dat']:
       if opArgDatMatch(dataArg1, dataArg2):
         noOfEqualArgs += 1;
         hasEqual[loop2['op_arg_dat'].index(dataArg2)] +=  1;
   totalNoOfArgs = len(loop1['op_arg_dat']) + len(loop2['op_arg_dat']);
   propEqualArgsLoop1 = noOfEqualArgs/len(loop1['op_arg_dat']);
   propEqualArgsLoop2 = noOfEqualArgs/len(loop2['op_arg_dat']);
-  matched = [0 for i in range(len(loop['op_arg_dat']))];
+  matched = [0 for i in range(len(loop2['op_arg_dat']))];
   noOfSameDatAndArrayCases = 0;
   for dataArg1 in loop1['op_arg_dat']:
     for index in range(0,len(loop2['op_arg_dat'])):
@@ -493,18 +597,18 @@ def calculateLoopFusionComplexity(loop1, loop2, arch):
           noOfSameDatAndArrayCases += 1;
   propSimilarArgsLoop1 = noOfSameDatAndArrayCases/len(loop1['op_arg_dat']);
   propSimilarArgsLoop2 = noOfSameDatAndArrayCases/len(loop2['op_arg_dat']);
-  propDiffArgsLoop1 = (len(loop1['op_arg_dat']) - (noOfEqualCases + noOfSameDatAndArrayCases))/len(loop1['op_arg_dat']);
-  propDiffArgsLoop2 = (len(loop2['op_arg_dat']) - (noOfEqualCases + noOfSameDatAndArrayCases))/len(loop2['op_arg_dat']);
+  propDiffArgsLoop1 = (len(loop1['op_arg_dat']) - (noOfEqualArgs + noOfSameDatAndArrayCases))/len(loop1['op_arg_dat']);
+  propDiffArgsLoop2 = (len(loop2['op_arg_dat']) - (noOfEqualArgs + noOfSameDatAndArrayCases))/len(loop2['op_arg_dat']);
   if arch == Arch.CPU:
-    sameArgsWeighting = 2;
-    similarArgsWeighting = 1;
-    differentArgsWeighting = -0.5
-    noOfArgsWeighting = -0.25;
+    sameArgsWeighting = 10;
+    similarArgsWeighting = 5;
+    differentArgsWeighting = -0.2;
+    noOfArgsWeighting = -0.1;
   else: 
-    sameArgsWeighting = 2;
-    similarArgsWeighting = 1;
-    differentArgsWeighting = -0.5;
-    noOfArgsWeighting = -0.5;
+    sameArgsWeighting = 10;
+    similarArgsWeighting = 5;
+    differentArgsWeighting = -0.2;
+    noOfArgsWeighting = -0.2;
   complexity += (propEqualArgsLoop1 + propEqualArgsLoop2) *sameArgsWeighting * noOfEqualArgs + (
                 (propSimilarArgsLoop1 + propSimilarArgsLoop2) * similarArgsWeighting * noOfSameDatAndArrayCases) + ( 
                 (propDiffArgsLoop1 + propDiffArgsLoop2) * differentArgsWeighting * (totalNoOfArgs - (noOfEqualArgs + noOfSameDatAndArrayCases))) + ( 
@@ -593,36 +697,40 @@ def similarityEstimation(CBRSystem, unmatchedCase):
   maxIndex = 0;
   maxList = [];
   for index in range(len(CBRSystem)):
-    intersectingArch = Arch.ANY;
-    if unmatchedCase['case']['arch'] == CBRSystem[index]['case']['arch']:
-      weightedIntersection[index][0] += weightedProperties[index][CBRSystem[index]['case']['arch']];
-      intersectingArch = unmatchedCase['case']['arch'];
+    if checkComparable(unmatchedCase['case'], CBRSystem[index]['case']):
+      intersectingArch = Arch.ANY;
+      if unmatchedCase['case']['arch'] == CBRSystem[index]['case']['arch']:
+        weightedIntersection[index][0] += weightedProperties[index][CBRSystem[index]['case']['arch']];
+        intersectingArch = unmatchedCase['case']['arch'];
 
-    intersectingCase =  {
-                        'arch' : intersectingArch,
-                        'fusable_pairs': fusablePairsIntersection(CBRSystem[index]['case']['fusable_pairs'], unmatchedCase['case']['fusable_pairs']),
-                        'op_par_loops': opParLoopsIntersection(CBRSystem[index]['case']['op_par_loops'], unmatchedCase['case']['op_par_loops'])
-                        }
+      intersectingCase =  {
+                          'arch' : intersectingArch,
+                          'fusable_pairs': fusablePairsIntersection(CBRSystem[index]['case']['fusable_pairs'], unmatchedCase['case']['fusable_pairs']),
+                          'op_par_loops': opParLoopsIntersection(CBRSystem[index]['case']['op_par_loops'], unmatchedCase['case']['op_par_loops'])
+                          }
      
-    weightedIntersection[index][1] += fusableLoopsWeighting(intersectingCase) * weightedProperties[index][4]; 
-    weightedIntersection[index][2] += opDatArgsWeighting(intersectingCase) * weightedProperties[index][5];
-    if sum(weightedIntersection[index]) > maxWeight:
-      maxWeight = sum(weightedIntersection[index]);
-      maxIndex = 0;
-      maxList = [];
-    if sum(weightedIntersection[index]) == maxWeight:
-      maxIndex += 1;
-      maxList.append(CBRSystem[index]);
+      weightedIntersection[index][1] += fusableLoopsWeighting(intersectingCase) * weightedProperties[index][4]; 
+      weightedIntersection[index][2] += opDatArgsWeighting(intersectingCase) * weightedProperties[index][5];
+      if sum(weightedIntersection[index]) > maxWeight:
+        maxWeight = sum(weightedIntersection[index]);
+        maxIndex = 0;
+        maxList = [];
+      if sum(weightedIntersection[index]) == maxWeight:
+        maxIndex += 1;
+        maxList.append(CBRSystem[index]);
 
-  if maxIndex > 0:
-    for index1 in range(maxIndex-1):
-      for index2 in range(index1+1,maxIndex):
-        if maxList[index1]['occurances'] < maxList[index2]['occurances']:
-          aux = maxList[index1];
-          maxList[index1] = maxList[index2];
-          maxList[index2] = aux;   
-  
-  return maxList[0];
+    if maxIndex > 0:
+      for index1 in range(maxIndex-1):
+        for index2 in range(index1+1,maxIndex):
+          if maxList[index1]['occurances'] < maxList[index2]['occurances']:
+            aux = maxList[index1];
+            maxList[index1] = maxList[index2];
+            maxList[index2] = aux;   
+ 
+  if len(maxList) > 0: 
+    return maxList[0];
+    
+  return None;
 
 def bestCaseMatch(CBRSystem, unmatchedCase):
   tempCase = caseLookup(CBRSystem, unmatchedCase);
@@ -630,12 +738,12 @@ def bestCaseMatch(CBRSystem, unmatchedCase):
   if tempCase == None or not equals(tempCase, unmatchedCase):
     tempCase = similarityEstimation(CBRSystem, unmatchedCase); 
  
-  unmatchedCase['solution'] = tempCase['solution'];
-  return unmatchedCase;
+  return tempCase;
 
 def checkBestMatch(CBRSystem, newCase, bestMatch):
   maxComplexity = 0;
   loopFusionComplexity = [];
+  wantedFusion = None;  
   for pair in newCase['case']['fusable_pairs']:
     loop1 = getLoopInfo(pair['loop1'], newCase['case']['op_par_loops']);
     loop2 = getLoopInfo(pair['loop2'], newCase['case']['op_par_loops']); 
@@ -650,21 +758,29 @@ def checkBestMatch(CBRSystem, newCase, bestMatch):
         maxComplexity = complexity;
 
   threshold = 0;
-  wantedFusion = None;  
   if maxComplexity > 0:
     # we have a good loop fusion
     # now we check if the bestMatch does it;
-    loopsToFuse = bestMatch['solution']['loops_to_fuse']; 
     wantedFusion = None;
     for fusion in loopFusionComplexity:
       if fusion['complexity'] == maxComplexity:
         wantedFusion = fusion['fusion'];
-    if loopsToFuse.index(wantedFusion) != -1:
-      return [True, bestMatch];
-  else:
-    if newCase['case']['arch'] == Arch.CPU and bestMatch['solution']['op_warpsize'] == 1:
-      return [True, bestMatch];
-     
+    print wantedFusion;
+    if bestMatch != None and checkComparable(newCase['case'], bestMatch['case']):
+      loopsToFuse = bestMatch['solution']['loops_to_fuse']; 
+      if loopsToFuse.index(wantedFusion) != -1:
+        return [True, bestMatch];
+      else:
+        if newCase['case']['arch'] == Arch.CPU and bestMatch['solution']['op_warpsize'] == 1:
+          return [True, bestMatch];
+  else:   
+    # we have no loop fusions
+    if bestMatch != None and checkComparable(newCase['case'], bestMatch['case']):
+      if len(bestMatch['solution']['loops_to_fuse']) == 0: 
+        return [True, bestMatch];
+      else:
+        if newCase['case']['arch'] == Arch.CPU and bestMatch['solution']['op_warpsize'] == 1:
+          return [True, bestMatch];
   # else, we clearly have a better case, so we shall create a new best case
   
   op_warpsize = 1;
@@ -680,14 +796,15 @@ def checkBestMatch(CBRSystem, newCase, bestMatch):
 
   if maxComplexity > overallMaxComplexity:
     overallMaxComplexity = maxComplexity;
-  
+ 
   complexityThresholdForDiffValuePartBlkSize = 4;
   
   temp_block_size = 128;
   temp_part_size = 128;
   referenceValue = 256;
+  adjustmentFactor = 16;
   if newCase['case']['arch'] == Arch.CPU:
-    temp_block_size =  1/overallMaxComplexity * referenceValue;
+    temp_block_size =  1/overallMaxComplexity * referenceValue * adjustmentFactor;
   else:
     temp_block_size = overallMaxComplexity/2 * referenceValue;
 
@@ -719,13 +836,14 @@ def checkBestMatch(CBRSystem, newCase, bestMatch):
 
 def retrieve(CBRSystem, newCase):
   bestMatch =  bestCaseMatch(CBRSystem, newCase);
-  
+
   # failsafe no 1 - we need to see if this is really a good option.
   # this situation might have not been encountered
-  betterMatch = checkBestMatch(CBRSystem, newCase, bestMatch);
+  [betterMatchFound, betterMatch] = checkBestMatch(CBRSystem, newCase, bestMatch);
+  return betterMatch;
 
 def reuse(bestCase, newCase):
-  newCase['solution'] = newCase['solution'];
+  newCase['solution'] = bestCase['solution'];
   return newCase;
 
 def retain(CBRSystem, solvedCase):
@@ -740,33 +858,6 @@ def CBRInit(CBRSystem, trainingCases, results):
                     };
     CBRSystem = checkExistsAndIncr(CBRSystemCase, CBRSystem);
   return CBRSystem;
-
-CBRCase1 =  { 
-            'arch' : Arch.CPU,
-            'fusable_pairs' : [],
-            'op_par_loops' : op_par_loops
-            }
-  
-CBRCase2 =  { 
-            'arch' : Arch.CPU,
-            'fusable_pairs' : fusable_pairs,
-            'op_par_loops' : op_par_loops
-            }
-
-CBRSolution1 =  {
-                'loops_to_fuse' : [],
-#                'final_loops' : loops_in_order, - not required
-                'op_warpsize' : 1,
-                'block_size' : 1,
-                'part_size' : 32
-                }
-
-CBRSolution2 =  {
-                'loops_to_fuse' : [{'loop1':"adt_calc", 'loop2':"res_calc"}],
-                'op_warpsize' : 1,
-                'block_size' : 1,
-                'part_size' : 32
-                }
 
 # parsing the tuner_correctness file
 totalCases = 0;
@@ -783,16 +874,14 @@ for line in tc_lines:
   else:
     print 'unidentified line';
 
-trainingCases = [CBRCase1, CBRCase2, CBRCase1];
-results = [CBRSolution1, CBRSolution2, CBRSolution1];
-
+[trainingCases, results] = retrieveTrainingData();
 CBRSystem = CBRInit(CBRSystem, trainingCases, results);
 
 # create vector of properties - the case
 
 newCase = {
           'case' :  {
-                    'arch' : Arch.GPU,
+                    'arch' : default_arch,
                     'fusable_pairs' : fusable_pairs, 
                     'op_par_loops' : op_par_loops
                     },
@@ -803,8 +892,11 @@ newCase = {
 # call machine learning to retrieve best result for the current case
 
 bestCase = retrieve(CBRSystem, newCase);
- 
+
+
 solvedCase = reuse(bestCase, newCase);
+
+print solvedCase['solution'];
 
 totalCases = totalCases+1;
 # we want to make sure that the ML algorithm has chosen the best option
@@ -824,6 +916,8 @@ else:
   adjustedCase['occurances']= 1
   CBRSystem = retain(CBRSystem, adjustedCase);
 
+#print correctlyIdentified;
+#print solvedCase['solution'];
 # store correctness results to file
 tuner_correctness_file = open('tuner_correctness','w');
 correctness_info = ['total_cases: ' + str(totalCases) + '\n', 'correctly_classified: ' + str(machineLearningCorrectness)]
@@ -832,4 +926,6 @@ tuner_correctness_file.writelines(correctness_info);
 # transform the best case into compiler flags
 
 # call compiler 
+
+
 
