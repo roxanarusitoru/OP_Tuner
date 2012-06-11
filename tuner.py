@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 
 from __future__ import division
-from os import sep
+from os import sep, environ, path, pathsep
 from sys import path, argv
 import sys
 import string
 import pycparser
 import math
 import copy
+#from Debug import Debug
 #import ~/Downloads/pycparser-2.06/pycparser/c_parser.py
 
 #import inspect
@@ -902,9 +903,11 @@ totalCases = totalCases+1;
 # we want to make sure that the ML algorithm has chosen the best option
 # we also count the number of occurances of it being correct
 [correctlyIdentified, fusions, params] = checkResult(solvedCase);
+resultingCase = None;
 if correctlyIdentified:
   machineLearningCorrectness = machineLearningCorrectness + 1;
   CBRSystem = retain(CBRSystem, solvedCase);
+  resultingCase = solvedCase;
 else:
   adjustedCase['case'] = solvedCase['case'];
   adjustedCase['solution'] =  { 
@@ -915,6 +918,7 @@ else:
                               } 
   adjustedCase['occurances']= 1
   CBRSystem = retain(CBRSystem, adjustedCase);
+  resultingCase = adjustedCase;
 
 #print correctlyIdentified;
 #print solvedCase['solution'];
@@ -925,7 +929,39 @@ tuner_correctness_file.writelines(correctness_info);
 
 # transform the best case into compiler flags
 
+originalLanguage = "-C"
+targetLanguage = "--opencl"
+debuggingLevel = "-d 5"
+verbose = "-v"
+
+
+
 # call compiler 
 
+roseEnvVariable = 'OP2_ROSE_FORTRAN_HOME';
+
+if not environ.has_key(roseEnvVariable):
+  errorMessage = "\nYou need to set the environment variable " + roseEnvVariable + " to point to the OP2_ROSE_FORTRAN infrastructure.\n"
+  print errorMessage;
+  exit(1);
+
+roseHome = split(environ.get(roseEnvVariable), pathsep)[0]
+if not path.isdir(roseHome):
+    debug.exitMessage("The source-to-source OP2_ROSE_FORTRAN path '%s' is not a directory" % (roseHome))
+
+makefilePath = roseHome + sep + 'scripts' + sep + 'Makefile.py';
+cmd = makefilePath + ' ' + originalLanguage + ' ' + targetLanguage + ' ' + debuggingLevel + ' ' + verbose;
+
+from subprocess import Popen, PIPE
+proc = Popen(cmd, shell = True, executable='/bin/bash', stderr=PIPE,stdout=PIPE);
+
+stdoutLines, stderrLines = proc.communicate();
+
+if proc.returncode != 0:
+    print('Problem running script: ' + cmd)
+    lines = stderrLines.splitlines()
+    for line in lines:
+      print (line);
+    exit()
 
 
